@@ -57,7 +57,8 @@ static gr_vec struct gr_infra_stat *graph_stats(uint16_t cpu_id) {
 				memccpy(stat.name, name, 0, sizeof(stat.name));
 				gr_vec_add(stats, stat);
 			}
-			if (strcmp(name, "port_rx") == 0 || strcmp(name, "control_input") == 0)
+			if (strncmp(name, "port_rx-", strlen("port_rx-")) == 0
+			    || strcmp(name, "control_input") == 0)
 				pkts += n->packets;
 			node_cycles += n->cycles;
 		}
@@ -127,7 +128,7 @@ static struct api_out stats_get(const void *request, struct api_ctx *) {
 		unsigned num;
 
 		while ((iface = iface_next(GR_IFACE_TYPE_PORT, iface)) != NULL) {
-			struct iface_info_port *port = (struct iface_info_port *)iface->info;
+			struct iface_info_port *port = iface_info_port(iface);
 
 			// call first with NULL/0 to get the exact count
 			if ((ret = rte_eth_xstats_get(port->port_id, NULL, 0)) < 0)
@@ -239,7 +240,7 @@ static struct api_out stats_reset(const void * /*request*/, struct api_ctx *) {
 	memset(iface_stats, 0, sizeof(iface_stats));
 
 	while ((iface = iface_next(GR_IFACE_TYPE_PORT, iface)) != NULL) {
-		struct iface_info_port *port = (struct iface_info_port *)iface->info;
+		struct iface_info_port *port = iface_info_port(iface);
 		if ((ret = rte_eth_stats_reset(port->port_id)) < 0)
 			return api_out(-ret, 0, NULL);
 		if ((ret = rte_eth_xstats_reset(port->port_id)) < 0)
@@ -277,7 +278,7 @@ static struct api_out iface_stats_get(const void * /*request*/, struct api_ctx *
 
 		if (iface->type == GR_IFACE_TYPE_PORT) {
 			// If possible, use the hardware statistics from the driver
-			struct iface_info_port *port = (struct iface_info_port *)iface->info;
+			struct iface_info_port *port = iface_info_port(iface);
 			struct rte_eth_stats stats = {0};
 			if (rte_eth_stats_get(port->port_id, &stats) == 0) {
 				s.rx_drops = stats.imissed;
@@ -355,7 +356,7 @@ telemetry_ifaces_info_get(const char * /*cmd*/, const char * /*params*/, struct 
 			rte_tel_data_add_dict_string(iface_container, "name", iface->name);
 			rte_tel_data_add_dict_uint(iface_container, "id", iface->id);
 			rte_tel_data_add_dict_string(
-				iface_container, "type", iface_type_to_str(iface->type)
+				iface_container, "type", gr_iface_type_name(iface->type)
 			);
 			rte_tel_data_add_dict_uint(iface_container, "mtu", iface->mtu);
 
@@ -372,7 +373,7 @@ telemetry_ifaces_info_get(const char * /*cmd*/, const char * /*params*/, struct 
 			rte_tel_data_add_dict_container(iface_container, "flags", flags_array, 0);
 
 			rte_tel_data_add_dict_string(
-				iface_container, "mode", iface_mode_to_str(iface->mode)
+				iface_container, "mode", gr_iface_mode_name(iface->mode)
 			);
 			rte_tel_data_add_dict_uint(iface_container, "vrf_id", iface->vrf_id);
 
@@ -399,8 +400,7 @@ telemetry_ifaces_info_get(const char * /*cmd*/, const char * /*params*/, struct 
 
 			// Get hardware stats for physical ports.
 			if (iface->type == GR_IFACE_TYPE_PORT) {
-				struct iface_info_port *port = (struct
-								iface_info_port *)iface->info;
+				struct iface_info_port *port = iface_info_port(iface);
 
 				struct rte_eth_stats eth_stats;
 				if (rte_eth_stats_get(port->port_id, &eth_stats) == 0) {

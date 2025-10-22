@@ -142,20 +142,23 @@ struct worker *worker_find(unsigned cpu_id) {
 	return NULL;
 }
 
-int port_unplug(uint16_t port_id) {
+int port_unplug(struct iface_info_port *p) {
+	gr_vec struct iface_info_port **ports = NULL;
+	struct iface *iface = NULL;
 	struct queue_map *qmap;
 	struct worker *worker;
 	int changed = 0;
+	int ret;
 
 	STAILQ_FOREACH (worker, &workers, next) {
 		gr_vec_foreach_ref (qmap, worker->rxqs) {
-			if (qmap->port_id == port_id) {
+			if (qmap->port_id == p->port_id) {
 				qmap->enabled = false;
 				changed++;
 			}
 		}
 		gr_vec_foreach_ref (qmap, worker->txqs) {
-			if (qmap->port_id == port_id) {
+			if (qmap->port_id == p->port_id) {
 				qmap->enabled = false;
 				changed++;
 			}
@@ -164,25 +167,34 @@ int port_unplug(uint16_t port_id) {
 	if (changed == 0)
 		return 0;
 
-	LOG(INFO, "port %u unplugged", port_id);
+	while ((iface = iface_next(GR_IFACE_TYPE_PORT, iface)) != NULL) {
+		struct iface_info_port *port = iface_info_port(iface);
+		if (port->port_id != p->port_id)
+			gr_vec_add(ports, port);
+	}
 
-	return worker_graph_reload_all();
+	ret = worker_graph_reload_all(ports);
+	gr_vec_free(ports);
+
+	LOG(INFO, "port %u unplugged", p->port_id);
+
+	return ret;
 }
 
-int port_plug(uint16_t port_id) {
+int port_plug(struct iface_info_port *p) {
 	struct queue_map *qmap;
 	struct worker *worker;
 	int changed = 0;
 
 	STAILQ_FOREACH (worker, &workers, next) {
 		gr_vec_foreach_ref (qmap, worker->rxqs) {
-			if (qmap->port_id == port_id) {
+			if (qmap->port_id == p->port_id) {
 				qmap->enabled = true;
 				changed++;
 			}
 		}
 		gr_vec_foreach_ref (qmap, worker->txqs) {
-			if (qmap->port_id == port_id) {
+			if (qmap->port_id == p->port_id) {
 				qmap->enabled = true;
 				changed++;
 			}
@@ -191,9 +203,23 @@ int port_plug(uint16_t port_id) {
 	if (changed == 0)
 		return errno_set(ENODEV);
 
-	LOG(INFO, "port %u plugged", port_id);
+	LOG(INFO, "port %u plugged", p->port_id);
 
-	return worker_graph_reload_all();
+	gr_vec struct iface_info_port **ports = NULL;
+	struct iface *iface = NULL;
+	bool found = false;
+	while ((iface = iface_next(GR_IFACE_TYPE_PORT, iface)) != NULL) {
+		struct iface_info_port *port = iface_info_port(iface);
+		if (port->port_id == p->port_id)
+			found = true;
+		gr_vec_add(ports, port);
+	}
+	if (!found)
+		gr_vec_add(ports, p);
+
+	int ret = worker_graph_reload_all(ports);
+	gr_vec_free(ports);
+	return ret;
 }
 
 static uint16_t worker_txq_id(const cpu_set_t *affinity, unsigned cpu_id) {
@@ -249,9 +275,14 @@ move:
 		break;
 	}
 
+	gr_vec struct iface_info_port **ports = NULL;
+	struct iface *iface = NULL;
+	while ((iface = iface_next(GR_IFACE_TYPE_PORT, iface)) != NULL)
+		gr_vec_add(ports, iface_info_port(iface));
+
 	// ensure source worker has released the rxq
-	if ((ret = worker_graph_reload(src_worker)) < 0)
-		return ret;
+	if ((ret = worker_graph_reload(src_worker, ports)) < 0)
+		goto end;
 
 	// now it is safe to assign rxq to dst_worker
 	struct queue_map rx_qmap = {
@@ -261,7 +292,11 @@ move:
 	};
 	gr_vec_add(dst_worker->rxqs, rx_qmap);
 
-	return worker_graph_reload(dst_worker);
+	ret = worker_graph_reload(dst_worker, ports);
+
+end:
+	gr_vec_free(ports);
+	return ret;
 }
 
 int worker_queue_distribute(const cpu_set_t *affinity, gr_vec struct iface_info_port **ports) {
@@ -282,7 +317,7 @@ int worker_queue_distribute(const cpu_set_t *affinity, gr_vec struct iface_info_
 			// Remove all RXQ/TXQ from that worker to have a clean slate.
 			gr_vec_free(worker->rxqs);
 			gr_vec_free(worker->txqs);
-			if ((ret = worker_graph_reload(worker)) < 0) {
+			if ((ret = worker_graph_reload(worker, ports)) < 0) {
 				errno_log(errno, "worker_graph_reload");
 				goto end;
 			}
@@ -382,7 +417,7 @@ int worker_queue_distribute(const cpu_set_t *affinity, gr_vec struct iface_info_
 		}
 	}
 
-	ret = worker_graph_reload_all();
+	ret = worker_graph_reload_all(ports);
 end:
 	gr_vec_free(cpus);
 	return ret;
