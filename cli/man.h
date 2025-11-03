@@ -22,5 +22,6 @@ enum ec_node_type_enum {
 
 enum ec_node_type_enum get_node_type(const struct ec_node *node);
 
-int print_main_man_page(void);
+int print_man_page(struct ec_node *cmdlist, char **argv);
+int print_main_man_page(struct ec_node *cmdlist);
 void man_print_title_underline(const char *title);

@@ -187,7 +187,7 @@ static void print_cli_options_from_tree(void) {
 	ec_node_free(options_tree);
 }
 
-int print_main_man_page(void) {
+int print_main_man_page(struct ec_node *cmdlist) {
 	char title[128];
 	snprintf(title, sizeof(title), "GRCLI 1 \"grout %s\"", GROUT_VERSION);
 	printf("%s\n", title);
@@ -205,6 +205,48 @@ int print_main_man_page(void) {
 	       GR_DEFAULT_SOCK_PATH);
 
 	printf("# SEE ALSO\n\n");
+
+	for (unsigned i = 0; i < ec_node_get_children_count(cmdlist); i++) {
+		struct ec_node *node, *str_node, *or_node;
+		unsigned refs;
+		const char *name = NULL;
+
+		if (ec_node_get_child(cmdlist, i, &node, &refs) < 0)
+			continue;
+
+		enum ec_node_type_enum node_type = get_node_type(node);
+
+		if (node_type == NODE_TYPE_SEQ) {
+			if (ec_node_get_children_count(node) < 2)
+				continue;
+			if (ec_node_get_child(node, 0, &str_node, &refs) < 0)
+				continue;
+			if (ec_node_get_child(node, 1, &or_node, &refs) < 0)
+				continue;
+
+			name = ec_node_id(or_node);
+			if (name == NULL || strcmp(name, EC_NO_ID) == 0)
+				continue;
+
+			printf("**grcli-%s**(1)\n\n", name);
+		} else if (node_type == NODE_TYPE_CMD) {
+			const char *full_id = ec_node_id(node);
+			if (full_id == NULL || strcmp(full_id, EC_NO_ID) == 0)
+				continue;
+
+			char *name_copy = strdup(full_id);
+			if (name_copy == NULL)
+				continue;
+
+			char *space = strchr(name_copy, ' ');
+			if (space != NULL)
+				*space = '\0';
+
+			printf("**grcli-%s**(1)\n\n", name_copy);
+			free(name_copy);
+		}
+	}
+
 	printf("**grout**(8)\n\n");
 
 	printf("# REPORTING BUGS\n\n");
